@@ -1,7 +1,12 @@
 'use client';
 
 import { AlertTriangleIcon } from '@flamingo-stack/openframe-frontend-core/components/icons-v2';
-import { Button, CircularProgress, PageLayout } from '@flamingo-stack/openframe-frontend-core/components/ui';
+import {
+  type ActionsMenuGroup,
+  Button,
+  CircularProgress,
+  PageLayout,
+} from '@flamingo-stack/openframe-frontend-core/components/ui';
 import { cn } from '@flamingo-stack/openframe-frontend-core/utils';
 import { format, parseISO } from 'date-fns';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -168,17 +173,22 @@ function BillingUsageContent() {
 
   const nextBilling = managedDevicesActive?.endDate ?? aiActive?.endDate ?? subscription?.endDate ?? null;
 
-  const menuActions = isCancelled
+  const menuActions: ActionsMenuGroup[] = isCancelled
     ? []
     : [
         {
-          label: 'Cancel Subscription',
-          onClick: () => {
-            setCancelReason(null);
-            setCancelStep('reason');
-          },
-          danger: true,
-          disabled: cancelSubscription.isPending,
+          items: [
+            {
+              id: 'cancel-subscription',
+              label: 'Cancel Subscription',
+              icon: <AlertTriangleIcon className="w-6 h-6 text-ods-error" />,
+              onClick: () => {
+                setCancelReason(null);
+                setCancelStep('reason');
+              },
+              disabled: cancelSubscription.isPending,
+            },
+          ],
         },
       ];
 
