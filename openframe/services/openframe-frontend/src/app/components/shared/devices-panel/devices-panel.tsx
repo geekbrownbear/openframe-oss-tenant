@@ -1,38 +1,58 @@
 'use client';
 
+import { GridIcon, PlusCircleIcon, TableCellIcon } from '@flamingo-stack/openframe-frontend-core/components/icons-v2';
 import {
-  Filter02Icon,
-  GridIcon,
-  PlusCircleIcon,
-  TableCellIcon,
-} from '@flamingo-stack/openframe-frontend-core/components/icons-v2';
-import {
-  Button,
   type ColumnDef,
   type ColumnFiltersState,
   DataTable,
-  FilterModal,
   type OnChangeFn,
   PageError,
   PageLayout,
   type Row,
   TabSelector,
-  TagSearchInput,
 } from '@flamingo-stack/openframe-frontend-core/components/ui';
-import { cn } from '@flamingo-stack/openframe-frontend-core/utils';
 import { useRouter } from 'next/navigation';
 import { useCallback, useMemo } from 'react';
-import { useDeviceFilters } from '../hooks/use-device-filters';
-import { useDevices } from '../hooks/use-devices';
-import { useDevicesUrlParams } from '../hooks/use-devices-url-params';
-import { useGridInfiniteScroll } from '../hooks/use-grid-infinite-scroll';
-import { useTagFilterModal } from '../hooks/use-tag-filter-modal';
-import type { Device } from '../types/device.types';
-import { DevicesGrid } from './devices-grid';
-import { DevicesTableBody, getDeviceFilterColumns, getDeviceTableRowActions } from './devices-table-columns';
+import { DevicesGrid } from '@/app/(app)/devices/components/devices-grid';
+import {
+  DevicesTableBody,
+  getDeviceFilterColumns,
+  getDeviceTableRowActions,
+} from '@/app/(app)/devices/components/devices-table-columns';
+import { useDeviceFilters } from '@/app/(app)/devices/hooks/use-device-filters';
+import { useDevices } from '@/app/(app)/devices/hooks/use-devices';
+import { useDevicesUrlParams } from '@/app/(app)/devices/hooks/use-devices-url-params';
+import { useGridInfiniteScroll } from '@/app/(app)/devices/hooks/use-grid-infinite-scroll';
+import { useTagFilterModal } from '@/app/(app)/devices/hooks/use-tag-filter-modal';
+import type { Device, DeviceFilterInput } from '@/app/(app)/devices/types/device.types';
+import { DevicesFilterToolbar } from '../devices-filter-toolbar';
 
-// TODO: Delete after successful testing of the DevicePanel component
-export function DevicesView() {
+export interface DevicesPanelProps {
+  /** Page title shown in the PageLayout header. */
+  title?: string;
+  /** Destination of the "Add Device" button. */
+  addDeviceHref?: string;
+  /** Filters merged on top of URL-driven filters (e.g. lock to a single organization). */
+  lockedFilters?: Partial<DeviceFilterInput>;
+  /** Column ids to drop from the table (e.g. 'organization' when scoped to one org). */
+  hideColumns?: string[];
+  /** Filter keys to drop from the FilterModal (e.g. 'organization' when scoped to one org). */
+  hideFilters?: string[];
+  /**
+   * Default statuses applied when the user hasn't picked any. Pass `[]` to disable
+   * the default and return devices of all statuses (e.g. when scoped to one customer).
+   */
+  defaultStatuses?: string[];
+}
+
+export function DevicesPanel({
+  title = 'Devices',
+  addDeviceHref = '/devices/new',
+  lockedFilters,
+  hideColumns,
+  hideFilters,
+  defaultStatuses,
+}: DevicesPanelProps) {
   const router = useRouter();
 
   const {
@@ -42,23 +62,26 @@ export function DevicesView() {
     localSearch,
     setLocalSearch,
     debouncedSearch,
-    filters,
+    filters: urlFilters,
     tableFilters,
     tagOptions,
     handleFilterChange,
     handleTagRemove,
     handleClearAll,
     handleTagSubmit,
-  } = useDevicesUrlParams();
+  } = useDevicesUrlParams({ defaultStatuses });
 
-  const { devices, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, error, refetch } = useDevices(
-    filters,
-    debouncedSearch,
-  );
+  const filters = useMemo<DeviceFilterInput>(() => ({ ...urlFilters, ...lockedFilters }), [urlFilters, lockedFilters]);
+
+  const { devices, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, error, refetch, filteredCount } =
+    useDevices(filters, debouncedSearch);
 
   const { data: deviceFilters, isLoading: isDeviceFiltersLoading } = useDeviceFilters(filters);
 
-  const filterColumns = useMemo(() => getDeviceFilterColumns(deviceFilters ?? null), [deviceFilters]);
+  const filterColumns = useMemo(() => {
+    const hidden = new Set(hideFilters ?? []);
+    return getDeviceFilterColumns(deviceFilters ?? null).filter(c => !hidden.has(c.key));
+  }, [deviceFilters, hideFilters]);
   const renderRowActions = useMemo(() => getDeviceTableRowActions(() => refetch()), [refetch]);
 
   const columnFilters = useMemo<ColumnFiltersState>(
@@ -125,7 +148,7 @@ export function DevicesView() {
   return (
     <>
       <PageLayout
-        title="Devices"
+        title={title}
         actionsVariant="icon-buttons"
         className="px-[var(--spacing-system-l)] pb-[var(--spacing-system-l)]"
         selector={
@@ -141,7 +164,7 @@ export function DevicesView() {
         actions={[
           {
             label: 'Add Device',
-            onClick: () => router.push('/devices/new'),
+            onClick: () => router.push(addDeviceHref),
             icon: <PlusCircleIcon className="w-5 h-5 text-ods-text-secondary" />,
             variant: 'outline',
           },
@@ -149,44 +172,25 @@ export function DevicesView() {
         contentClassName="flex flex-col"
       >
         <div>
-          <div
-            className={cn(
-              'sticky top-0 z-20 flex gap-[var(--spacing-system-m)] items-center',
-              'bg-ods-bg -mx-[var(--spacing-system-l)] p-[var(--spacing-system-l)] -mt-[var(--spacing-system-l)]',
-            )}
-          >
-            <div className="flex-1 min-w-0">
-              <TagSearchInput
-                tags={tagOptions}
-                searchValue={localSearch}
-                onSearchChange={setLocalSearch}
-                onTagRemove={handleTagRemove}
-                onClearAll={handleClearAll}
-                onSubmit={handleTagSubmit}
-                placeholder="Search for Devices"
-                addMorePlaceholder="Add More..."
-              />
-            </div>
-            {isMdUp ? (
-              <Button
-                variant="outline"
-                onClick={openFilterModal}
-                leftIcon={<Filter02Icon className="text-ods-text-secondary" />}
-                className="shrink-0"
-              >
-                Device Tags
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={openFilterModal}
-                leftIcon={<Filter02Icon className="text-ods-text-secondary" />}
-                className="shrink-0"
-              />
-            )}
-          </div>
-
+          <DevicesFilterToolbar
+            searchValue={localSearch}
+            onSearchChange={setLocalSearch}
+            tags={tagOptions}
+            onTagRemove={handleTagRemove}
+            onClearAll={handleClearAll}
+            onSubmit={handleTagSubmit}
+            isMdUp={isMdUp}
+            onOpenFilterModal={openFilterModal}
+            isFilterModalOpen={filterModalOpen}
+            onCloseFilterModal={closeFilterModal}
+            filterGroups={filterGroups}
+            onFilterChange={handleModalFilterChange}
+            currentFilters={!isMdUp ? tableFilters : undefined}
+            tagFilterKeys={tagFilterKeys}
+            selectedTags={selectedTags}
+            onTagsChange={handleModalTagsChange}
+            isLoading={isDeviceFiltersLoading}
+          />
           {params.viewMode === 'table' ? (
             <DevicesTableBody
               devices={devices}
@@ -198,6 +202,8 @@ export function DevicesView() {
               columnFilters={columnFilters}
               onColumnFiltersChange={onColumnFiltersChange}
               actionsColumn={actionsColumn}
+              hideColumns={hideColumns}
+              totalCount={filteredCount}
               footerSlot={
                 <DataTable.InfiniteFooter
                   hasNextPage={hasNextPage}
@@ -219,19 +225,6 @@ export function DevicesView() {
           )}
         </div>
       </PageLayout>
-
-      <FilterModal
-        isOpen={filterModalOpen}
-        onClose={closeFilterModal}
-        filterGroups={filterGroups}
-        onFilterChange={handleModalFilterChange}
-        currentFilters={!isMdUp ? tableFilters : undefined}
-        tagFilterKeys={tagFilterKeys}
-        selectedTags={selectedTags}
-        onTagsChange={handleModalTagsChange}
-        isLoading={isDeviceFiltersLoading}
-        className="max-w-[600px]"
-      />
     </>
   );
 }
