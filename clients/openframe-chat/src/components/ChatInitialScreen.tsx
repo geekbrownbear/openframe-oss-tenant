@@ -1,24 +1,16 @@
-import { ChatQuickAction, type ChatTicketItemData, ChatTicketList } from '@flamingo-stack/openframe-frontend-core';
+import { type ChatTicketItemData, ChatTicketList } from '@flamingo-stack/openframe-frontend-core';
 import { cn } from '@flamingo-stack/openframe-frontend-core/utils';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { QuickAction } from '../hooks/useChatConfig';
 import { useDocumentTheme } from '../hooks/useDocumentTheme';
 
 interface ChatInitialScreenProps {
   tickets: ChatTicketItemData[];
   onTicketClick: (ticketId: string) => void | Promise<void>;
-  quickActions: QuickAction[];
-  onQuickAction: (text: string) => void;
-  isDisconnected: boolean;
+  /** While true, show skeleton ticket rows instead of the loaded list. */
+  isLoadingTickets?: boolean;
 }
 
-export function ChatInitialScreen({
-  tickets,
-  onTicketClick,
-  quickActions,
-  onQuickAction,
-  isDisconnected,
-}: ChatInitialScreenProps) {
+export function ChatInitialScreen({ tickets, onTicketClick, isLoadingTickets = false }: ChatInitialScreenProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showBottomFade, setShowBottomFade] = useState(false);
   const [showTopFade, setShowTopFade] = useState(false);
@@ -49,25 +41,6 @@ export function ChatInitialScreen({
     };
   }, [updateScrollState]);
 
-  const quickHelp = quickActions.length > 0 && (
-    <div className="w-full max-w-ods-content-narrow">
-      <h3 className="text-xs uppercase tracking-wider text-ods-text-secondary mb-[var(--spacing-system-sf)]">
-        Quick Help
-      </h3>
-      <div className="space-y-[var(--spacing-system-xxs)]">
-        {quickActions.map(action => (
-          <ChatQuickAction
-            className="bg-ods-card"
-            key={action.id}
-            text={action.name}
-            onAction={() => onQuickAction(action.instructions)}
-            disabled={isDisconnected}
-          />
-        ))}
-      </div>
-    </div>
-  );
-
   const hasTickets = tickets.length > 0;
 
   return (
@@ -79,14 +52,16 @@ export function ChatInitialScreen({
             <p className="text-h4 text-ods-text-secondary">Describe what's happening and I'll take a look.</p>
           </div>
 
-          {hasTickets ? (
-            <ChatTicketList
-              className="w-full max-w-ods-content-narrow [&_button:last-child]:border-b-0"
-              tickets={tickets}
-              onTicketClick={onTicketClick}
-            />
+          {isLoadingTickets ? (
+            <ChatTicketList className="w-full max-w-ods-content-narrow" tickets={[]} isLoading skeletonCount={5} />
           ) : (
-            quickHelp
+            hasTickets && (
+              <ChatTicketList
+                className="w-full max-w-ods-content-narrow [&_button:last-child]:border-b-0"
+                tickets={tickets}
+                onTicketClick={onTicketClick}
+              />
+            )
           )}
         </div>
       </div>
