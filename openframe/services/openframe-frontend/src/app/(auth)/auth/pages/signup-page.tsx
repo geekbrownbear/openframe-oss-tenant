@@ -28,7 +28,6 @@ export default function SignupPage() {
   const storedOrgName = typeof window !== 'undefined' ? sessionStorage.getItem('auth:org_name') || '' : '';
   const storedDomain =
     typeof window !== 'undefined' ? sessionStorage.getItem('auth:domain') || 'localhost' : 'localhost';
-  const storedAccessCode = typeof window !== 'undefined' ? sessionStorage.getItem('auth:access_code') || '' : '';
   const storedEmail = typeof window !== 'undefined' ? sessionStorage.getItem('auth:email') || '' : '';
 
   const handleSignupSubmit = (data: any) => {
@@ -36,14 +35,18 @@ export default function SignupPage() {
   };
 
   const handleSsoSignup = async (provider: string) => {
-    if (storedOrgName && storedDomain && storedAccessCode) {
+    if (storedOrgName && storedDomain) {
+      // Stale session data without email — restart from the choice step
+      if (!storedEmail) {
+        router.push('/auth/');
+        return;
+      }
       await registerOrganizationSso({
         tenantName: storedOrgName,
         tenantDomain: storedDomain,
         email: storedEmail,
         provider: provider as 'google' | 'microsoft',
         redirectTo: '/auth/login',
-        accessCode: storedAccessCode,
       });
     } else {
       if (storedOrgName) {
@@ -61,7 +64,6 @@ export default function SignupPage() {
       <AuthSignupSection
         orgName={storedOrgName}
         domain={storedDomain}
-        accessCode={storedAccessCode}
         email={storedEmail}
         onSubmit={handleSignupSubmit}
         onSso={handleSsoSignup}
