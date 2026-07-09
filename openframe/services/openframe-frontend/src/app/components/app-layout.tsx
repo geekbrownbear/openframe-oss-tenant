@@ -2,6 +2,7 @@
 
 import { useOptionalNotifications } from '@flamingo-stack/openframe-frontend-core';
 import { ChatIdentityProvider } from '@flamingo-stack/openframe-frontend-core/components/chat';
+import { ErrorBoundary } from '@flamingo-stack/openframe-frontend-core/components/features';
 import {
   AppLayoutDrawer,
   AppLayoutDrawerContent,
@@ -11,6 +12,11 @@ import type { NavigationSidebarConfig } from '@flamingo-stack/openframe-frontend
 import { usePathname, useRouter } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMingoLauncherStore } from '@/app/(app)/mingo/stores/mingo-launcher-store';
+import {
+  countCompleted,
+  TENANT_ONBOARDING_STEPS,
+  USER_ONBOARDING_STEPS,
+} from '@/app/(app)/onboarding/onboarding-steps';
 import { employeeDetailHref } from '@/app/(app)/settings/employees/routes';
 import { useAuthSession } from '@/app/(auth)/auth/hooks/use-auth-session';
 import { useAuthStore } from '@/app/(auth)/auth/stores/auth-store';
@@ -19,11 +25,16 @@ import { LogoutConfirmModal } from '@/app/components/shared/logout-confirm-modal
 import { featureFlags } from '@/lib/feature-flags';
 import { getFullImageUrl } from '@/lib/image-url';
 import { isNativeShell } from '@/lib/native-shell';
+import { useOnboardingStore } from '@/stores/onboarding-store';
 import { isAuthOnlyMode, isOssTenantMode, isSaasTenantMode } from '../../lib/app-mode';
 import { getNavigationItems } from '../../lib/navigation-config';
 import { AppShellSkeleton } from './app-shell-skeleton';
 import { ChatDrawerErrorBoundary } from './chat-drawer-error-boundary';
+import { InitialSetupBar } from './initial-setup-bar';
 import { type UnreadCountsByCategory, UnreadCountsHydrator } from './notifications/unread-counts-hydrator';
+import { OnboardingCoachMark } from './onboarding-coach-mark';
+import { OnboardingProgressHydrator } from './onboarding-progress-hydrator';
+import { OnboardingTourBar } from './onboarding-tour-bar';
 import { OpenframeEmbeddableChatEntry } from './openframe-embeddable-chat-entry';
 import { SubscriptionGuard } from './subscription-lock/subscription-guard';
 import { SubscriptionLockContent } from './subscription-lock/subscription-lock-content';
@@ -131,16 +142,81 @@ function AppShell({ children, mainClassName }: { children: React.ReactNode; main
   const isMingoPage = pathname?.startsWith('/mingo') ?? false;
   const chatEnabled = featureFlags.mingoSidebar.enabled() && !showLockContent && !isMingoPage;
   const [unreadCounts, setUnreadCounts] = useState<UnreadCountsByCategory>({});
-  const navigationItems = useMemo(() => getNavigationItems(pathname, unreadCounts), [pathname, unreadCounts]);
+
+  // Onboarding chrome (behind the `new-onboarding` flag): the sidebar "Onboarding"
+  // tab/badge and the Initial Setup / tour top bars. Progress comes from the backend
+  // via the onboarding store, hydrated by `OnboardingProgressHydrator` (mounted below
+  // only when the flag is on). `onboardingLoaded` gates the chrome so nothing flickers
+  // before we know the real state.
+  const newOnboardingEnabled = featureFlags.newOnboarding.enabled();
+  const tenantProgress = useOnboardingStore(state => state.tenant);
+  const userProgress = useOnboardingStore(state => state.user);
+  const onboardingLoaded = useOnboardingStore(state => state.isLoaded);
+
+  const tenantDone = countCompleted(TENANT_ONBOARDING_STEPS, tenantProgress?.completedSteps ?? []);
+  const userDone = countCompleted(USER_ONBOARDING_STEPS, userProgress?.completedSteps ?? []);
+  const userRemaining = USER_ONBOARDING_STEPS.length - userDone;
+  // User "Get Started" is live until the user explicitly finishes or skips it.
+  const userInProgress = !!userProgress && !userProgress.completed && !userProgress.skipped;
+  // Tenant phase ends when an admin clicks the explicit "Complete Setup".
+  const initialSetupComplete = tenantProgress?.completed ?? false;
+  const showOnboardingChrome = newOnboardingEnabled && onboardingLoaded;
+
+  // The personal "Get Started" tour (sidebar tab + badge) only appears once the
+  // tenant Initial Setup is complete — until then the user is kept on Initial Setup.
+  const userOnboardingActive = showOnboardingChrome && initialSetupComplete && userInProgress;
+
+  const navigationItems = useMemo(
+    () =>
+      getNavigationItems(
+        pathname,
+        unreadCounts,
+        userOnboardingActive ? { inProgress: true, remaining: userRemaining } : undefined,
+      ),
+    [pathname, unreadCounts, userOnboardingActive, userRemaining],
+  );
 
   const sidebarConfig: NavigationSidebarConfig = useMemo(
     () => ({
       items: navigationItems,
       onNavigate: handleNavigate,
-      className: 'h-screen',
+      // `h-full` (not `h-screen`) so the sidebar fills the layout row below the
+      // optional top bar rather than overflowing the viewport by its height.
+      className: 'h-full',
     }),
     [navigationItems, handleNavigate],
   );
+
+  // Onboarding top bar (single `topBar` slot, one bar at a time):
+  //   Tenant phase (Initial Setup incomplete): the yellow `InitialSetupBar` on
+  //     EVERY page — on the dashboard (which hosts the setup card) the CTA is
+  //     dropped, everywhere else it links back to the card.
+  //   User phase (Initial Setup done, Get Started still in progress): the
+  //     `OnboardingTourBar` on EVERY page — on `/onboarding` the CTA is dropped.
+  // Each bar's CTA reads "Start …"/"Take …" until its first step is done, then
+  // "Continue …". Driven by the backend onboarding progress in the store.
+  const isOnboardingPage = pathname?.startsWith('/onboarding') ?? false;
+  const isDashboardPage = pathname === '/' || (pathname?.startsWith('/dashboard') ?? false);
+  let topBar: React.ReactNode;
+  if (showOnboardingChrome) {
+    if (!initialSetupComplete) {
+      topBar = (
+        <InitialSetupBar
+          onStart={() => router.push('/dashboard')}
+          started={tenantDone > 0}
+          showAction={!isDashboardPage}
+        />
+      );
+    } else if (userInProgress) {
+      topBar = (
+        <OnboardingTourBar
+          onStart={() => router.push('/onboarding')}
+          started={userDone > 0}
+          showAction={!isOnboardingPage}
+        />
+      );
+    }
+  }
 
   const displayName = useMemo(
     () => `${userFirstName || ''} ${userLastName || ''}`.trim(),
@@ -228,9 +304,15 @@ function AppShell({ children, mainClassName }: { children: React.ReactNode; main
   return (
     <>
       {notificationsEnabled && (
-        <Suspense fallback={null}>
-          <UnreadCountsHydrator onChange={setUnreadCounts} />
-        </Suspense>
+        // ErrorBoundary + Suspense mirror the drawer hydrator: a trial-expired GraphQL error
+        // makes the query return null data, which Relay surfaces as a thrown error. Without the
+        // boundary it bubbles to Next's root and shows the full-page "couldn't load" screen
+        // instead of degrading silently (the subscription lock UI handles the messaging).
+        <ErrorBoundary fallback={null}>
+          <Suspense fallback={null}>
+            <UnreadCountsHydrator onChange={setUnreadCounts} />
+          </Suspense>
+        </ErrorBoundary>
       )}
       <TimeTrackerHostProvider enabled={timeTrackerEnabled}>
         <CoreAppLayout
@@ -241,10 +323,21 @@ function AppShell({ children, mainClassName }: { children: React.ReactNode; main
           headerProps={headerProps}
           disabled={showLockContent}
           drawer={chatDrawer}
+          topBar={topBar}
         >
           {showLockContent ? <SubscriptionLockContent /> : children}
         </CoreAppLayout>
       </TimeTrackerHostProvider>
+      {/* Onboarding progress hydrator (fetches backend progress into the store)
+          + coach-mark (shows only when a page was reached from an onboarding step
+          via the `setupHint` query param). Both only when the flag is on, so the
+          onboarding queries never fire while the feature is off. */}
+      {newOnboardingEnabled && (
+        <Suspense fallback={null}>
+          <OnboardingProgressHydrator />
+          <OnboardingCoachMark />
+        </Suspense>
+      )}
       {/* Logout confirmation modal — opened from the nav user menu and the
           Settings "Log Out" button via `useLogoutConfirmStore`. */}
       <LogoutConfirmModal />
