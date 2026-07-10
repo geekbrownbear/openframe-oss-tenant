@@ -4,6 +4,7 @@ import { ToolBadge } from '@flamingo-stack/openframe-frontend-core';
 import { MingoIcon } from '@flamingo-stack/openframe-frontend-core/components/icons';
 import {
   ArrowRightUpIcon,
+  CalendarIcon,
   ClipboardListIcon,
   EyeAltIcon,
   EyeIcon,
@@ -17,6 +18,9 @@ import {
   Button,
   type ColumnDef,
   DataTable,
+  DateFilterMenu,
+  type DateFilterResult,
+  type DateRange,
   FilterModal,
   Input,
   multiSelectFilterFn,
@@ -27,7 +31,8 @@ import {
   useDataTable,
 } from '@flamingo-stack/openframe-frontend-core/components/ui';
 import { useApiParams, useToast } from '@flamingo-stack/openframe-frontend-core/hooks';
-import { normalizeToolTypeWithFallback, toToolLabel } from '@flamingo-stack/openframe-frontend-core/utils';
+import { cn, normalizeToolTypeWithFallback, toToolLabel } from '@flamingo-stack/openframe-frontend-core/utils';
+import { endOfDay, format, parse, startOfDay } from 'date-fns';
 import {
   forwardRef,
   Suspense,
@@ -46,6 +51,7 @@ import type { logsTableRelayQuery as LogsQueryType } from '@/__generated__/logsT
 import { useAskMingo } from '@/app/(app)/mingo/hooks/use-ask-mingo';
 import { EMBEDDED_PAGE_OFFSET, EmptyState, LogDrawer } from '@/app/components/shared';
 import { useSearchParam } from '@/app/hooks/use-search-param';
+import { LogSortField, SortDirection } from '@/generated/schema-enums';
 import { transformOrganizationFilters } from '@/lib/filter-utils';
 import { formatDateTime } from '@/lib/format-date';
 import { openInNewTab } from '@/lib/open-in-new-tab';
@@ -64,9 +70,10 @@ const logsTableRelayQuery = graphql`
     $first: Int!
     $after: String
     $search: String
+    $sort: LogSortInput
   ) {
     ...logsTableRelay_query
-      @arguments(filter: $filter, first: $first, after: $after, search: $search)
+      @arguments(filter: $filter, first: $first, after: $after, search: $search, sort: $sort)
     logFilters(filter: $filter) {
       toolTypes
       eventTypes
@@ -87,8 +94,9 @@ const logsTableRelayFragment = graphql`
       first: { type: "Int", defaultValue: 20 }
       after: { type: "String" }
       search: { type: "String" }
+      sort: { type: "LogSortInput" }
     ) {
-    logs(filter: $filter, first: $first, after: $after, search: $search)
+    logs(filter: $filter, first: $first, after: $after, search: $search, sort: $sort)
       @connection(key: "logsTableRelay_logs") {
       edges {
         node {
@@ -114,9 +122,24 @@ const logsTableRelayFragment = graphql`
   }
 `;
 
+// Day-granular date filter <-> URL param (local yyyy-MM-dd)
+const DAY_PARAM_FORMAT = 'yyyy-MM-dd';
+const toDayParam = (date: Date): string => format(date, DAY_PARAM_FORMAT);
+const parseDayParam = (value: string): Date | undefined => {
+  const parsed = parse(value, DAY_PARAM_FORMAT, new Date());
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+};
+
 // ----------------------------------------------------------------
 // Types
 // ----------------------------------------------------------------
+
+type UiSortDirection = 'asc' | 'desc';
+
+interface LogSortInput {
+  field: LogSortField;
+  direction: SortDirection;
+}
 
 interface UiLogEntry {
   id: string;
@@ -162,6 +185,11 @@ interface LogsTableContentProps {
   deviceId?: string;
   organizationLocked?: boolean;
   backendFilters: LogFilterInput;
+  sort: LogSortInput;
+  /** Applied date filter (Log ID column) — drives the header calendar popover */
+  dateRange: DateRange | undefined;
+  sortDirection: UiSortDirection;
+  onDateFilterApply: (result: DateFilterResult) => void;
   debouncedSearch: string;
   tableFilters: Record<string, string[]>;
   onFilterChange: (filters: Record<string, any[]>) => void;
@@ -183,6 +211,10 @@ function LogsTableContent({
   deviceId,
   organizationLocked,
   backendFilters,
+  sort,
+  dateRange,
+  sortDirection,
+  onDateFilterApply,
   debouncedSearch,
   tableFilters,
   onFilterChange,
@@ -203,6 +235,7 @@ function LogsTableContent({
       first: LOGS_PAGE_SIZE,
       after: null,
       search: debouncedSearch || null,
+      sort,
     },
     { fetchPolicy: 'store-and-network' },
   );
@@ -273,11 +306,12 @@ function LogsTableContent({
           first: LOGS_PAGE_SIZE,
           after: null,
           search: debouncedSearch || null,
+          sort,
         },
         { fetchPolicy: 'network-only' },
       );
     });
-  }, [refetch, backendFilters, debouncedSearch]);
+  }, [refetch, backendFilters, debouncedSearch, sort]);
 
   // Expose refresh to parent via mutable ref
   onRefreshRef.current = resetToFirstPage;
@@ -325,7 +359,36 @@ function LogsTableContent({
     () => [
       {
         accessorKey: 'logId',
-        header: 'Log ID',
+        // Custom header: label + calendar popover with timestamp sort + date-range filter.
+        // No own vertical padding — the lib HeaderCell wrapper already pads the row.
+        header: () => (
+          <div className="group flex items-center gap-[var(--spacing-system-xsf)] select-none">
+            <span className="text-h5 text-ods-text-secondary whitespace-nowrap transition-colors duration-200 group-hover:text-ods-text-primary">
+              Log ID
+            </span>
+            <DateFilterMenu
+              mode="range"
+              sort={sortDirection}
+              range={dateRange}
+              onApply={onDateFilterApply}
+              // Compact inline trigger — keeps the header row height identical to
+              // the other columns (the default lib trigger is a 48px Button).
+              trigger={
+                <button type="button" aria-label="Sort and filter logs by date" className="flex items-center">
+                  <CalendarIcon
+                    className={cn(
+                      'w-4 h-4 transition-colors duration-200',
+                      // Active when a date range or a non-default sort is applied
+                      dateRange || sortDirection !== 'desc'
+                        ? 'text-ods-accent'
+                        : 'text-ods-text-secondary group-hover:text-ods-text-primary',
+                    )}
+                  />
+                </button>
+              }
+            />
+          </div>
+        ),
         cell: ({ row }: { row: Row<UiLogEntry> }) => (
           <div className="flex flex-col justify-center shrink-0">
             <TruncateText>{row.original.timestamp}</TruncateText>
@@ -335,7 +398,7 @@ function LogsTableContent({
           </div>
         ),
         enableSorting: false,
-        meta: { width: 'w-[200px]' },
+        meta: { width: 'w-[200px]', alwaysShowHeader: true },
       },
       {
         accessorKey: 'status',
@@ -471,7 +534,7 @@ function LogsTableContent({
         meta: { width: 'w-12 shrink-0 flex-none', align: 'right' },
       },
     ],
-    [logFilters, getLogDetailsUrl, organizationLocked],
+    [logFilters, getLogDetailsUrl, organizationLocked, dateRange, sortDirection, onDateFilterApply],
   );
 
   // Mobile filter groups reuse the same column filter options (built from
@@ -610,6 +673,14 @@ function LogsTableContent({
         filterGroups={filterGroups}
         onFilterChange={onFilterChange}
         currentFilters={tableFilters}
+        // Date sort + range — last section, committed together with the group
+        // filters (the outer handler merges both into a single URL write).
+        dateFilter={{
+          title: 'Date',
+          sort: sortDirection,
+          range: dateRange,
+          onChange: onDateFilterApply,
+        }}
       />
 
       <LogDrawer
@@ -649,7 +720,7 @@ export function LogsTableSkeleton() {
         accessorKey: 'logId',
         header: 'Log ID',
         enableSorting: false,
-        meta: { width: 'w-[200px]' },
+        meta: { width: 'w-[200px]', alwaysShowHeader: true },
       },
       {
         accessorKey: 'status',
@@ -725,6 +796,9 @@ export const LogsTable = forwardRef<LogsTableRef, LogsTableProps>(function LogsT
     severities: { type: 'array', default: [] },
     toolTypes: { type: 'array', default: [] },
     organizationIds: { type: 'array', default: [] },
+    dateFrom: { type: 'string', default: '' },
+    dateTo: { type: 'string', default: '' },
+    sortDirection: { type: 'string', default: 'desc' },
   });
 
   // Local search input keeps typing responsive; the debounced value drives both
@@ -744,14 +818,70 @@ export const LogsTable = forwardRef<LogsTableRef, LogsTableProps>(function LogsT
 
   const lockedOrgIds = useMemo(() => (organizationId ? [organizationId] : undefined), [organizationId]);
 
-  const backendFilters: LogFilterInput = useMemo(
+  // Applied date filter (Log ID column) restored from the URL
+  const dateRange: DateRange | undefined = useMemo(() => {
+    const from = params.dateFrom ? parseDayParam(params.dateFrom) : undefined;
+    const to = params.dateTo ? parseDayParam(params.dateTo) : undefined;
+    return from || to ? { from, to } : undefined;
+  }, [params.dateFrom, params.dateTo]);
+
+  const sortDirection: UiSortDirection = params.sortDirection === 'asc' ? 'asc' : 'desc';
+
+  const sort: LogSortInput = useMemo(
     () => ({
+      field: LogSortField.TIMESTAMP,
+      direction: sortDirection === 'asc' ? SortDirection.ASC : SortDirection.DESC,
+    }),
+    [sortDirection],
+  );
+
+  const backendFilters: LogFilterInput = useMemo(() => {
+    // Inclusive UTC instants covering the selected local days; a single picked
+    // day (no `to`) filters that one day.
+    const upperBoundDay = dateRange?.to ?? dateRange?.from;
+    return {
       severities: params.severities,
       toolTypes: params.toolTypes,
       organizationIds: lockedOrgIds ?? params.organizationIds,
       deviceId,
-    }),
-    [params.severities, params.toolTypes, params.organizationIds, deviceId, lockedOrgIds],
+      timestampFrom: dateRange?.from ? startOfDay(dateRange.from).toISOString() : undefined,
+      timestampTo: upperBoundDay ? endOfDay(upperBoundDay).toISOString() : undefined,
+    };
+  }, [params.severities, params.toolTypes, params.organizationIds, deviceId, lockedOrgIds, dateRange]);
+
+  // The mobile FilterModal commits the group filters and the date filter as
+  // two callbacks in the same tick; sequential setParams calls clobber each
+  // other (each re-reads the stale URL), so merge them into one write.
+  const pendingParamsRef = useRef<Record<string, string | string[]> | null>(null);
+  const queueParamsWrite = useCallback(
+    (updates: Record<string, string | string[]>) => {
+      if (pendingParamsRef.current) {
+        Object.assign(pendingParamsRef.current, updates);
+        return;
+      }
+      pendingParamsRef.current = updates;
+      queueMicrotask(() => {
+        const merged = pendingParamsRef.current;
+        pendingParamsRef.current = null;
+        if (merged) {
+          setParams(merged);
+        }
+      });
+      document.querySelector('main')?.scrollTo({ top: 0, behavior: 'instant' });
+    },
+    [setParams],
+  );
+
+  const handleDateFilterApply = useCallback(
+    (result: DateFilterResult) => {
+      queueParamsWrite({
+        // Default direction stays out of the URL
+        sortDirection: result.sort === 'desc' ? '' : result.sort,
+        dateFrom: result.range?.from ? toDayParam(result.range.from) : '',
+        dateTo: result.range?.to ? toDayParam(result.range.to) : '',
+      });
+    },
+    [queueParamsWrite],
   );
 
   const tableFilters = useMemo(
@@ -765,14 +895,13 @@ export const LogsTable = forwardRef<LogsTableRef, LogsTableProps>(function LogsT
 
   const handleFilterChange = useCallback(
     (columnFilters: Record<string, any[]>) => {
-      setParams({
+      queueParamsWrite({
         severities: columnFilters.status || [],
         toolTypes: columnFilters.tool || [],
         organizationIds: columnFilters.source || [],
       });
-      document.querySelector('main')?.scrollTo({ top: 0, behavior: 'instant' });
     },
-    [setParams],
+    [queueParamsWrite],
   );
 
   // Mutable ref so inner component can expose refresh without re-renders
@@ -836,6 +965,10 @@ export const LogsTable = forwardRef<LogsTableRef, LogsTableProps>(function LogsT
           deviceId={deviceId}
           organizationLocked={Boolean(organizationId)}
           backendFilters={backendFilters}
+          sort={sort}
+          dateRange={dateRange}
+          sortDirection={sortDirection}
+          onDateFilterApply={handleDateFilterApply}
           debouncedSearch={debouncedSearch}
           tableFilters={tableFilters}
           onFilterChange={handleFilterChange}
