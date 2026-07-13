@@ -1,5 +1,6 @@
 import { ADMIN_APPROVAL_REQUEST_CONTEXT_TYPE, type Notification } from '@flamingo-stack/openframe-frontend-core';
 import { featureFlags } from '@/lib/feature-flags';
+import { routes } from '@/lib/routes';
 
 // Backend `NotificationContext.type` discriminators (the string `type` field; the same set the
 // concrete `__typename` subtypes carry in schema.graphql). NATS payloads carry only this string,
@@ -52,9 +53,9 @@ const TICKET_CHAT_CONTEXT_TYPES = new Set<string>([
  */
 export type NotificationAction = { label: string; route: string } | { label: string; mingoDialogId: string };
 
-const mingoDialogRoute = (dialogId: string) => `/mingo?dialogId=${encodeURIComponent(dialogId)}`;
-const ticketRoute = (ticketId: string, tab?: 'chat') =>
-  `/tickets/dialog?id=${encodeURIComponent(ticketId)}${tab ? `&tab=${tab}` : ''}`;
+// routes.* builders URL-encode values via URLSearchParams — no manual encodeURIComponent.
+const mingoDialogRoute = (dialogId: string) => routes.mingo({ dialogId });
+const ticketRoute = (ticketId: string, tab?: 'chat') => routes.tickets.dialog(ticketId, { tab });
 
 /**
  * Action for a Mingo dialog. With `mingo-sidebar` ON the `/mingo` page is gone

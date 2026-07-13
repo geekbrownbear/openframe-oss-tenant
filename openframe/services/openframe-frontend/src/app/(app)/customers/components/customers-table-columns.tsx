@@ -16,6 +16,7 @@ import { type ReactNode, useMemo } from 'react';
 import { formatDateTime } from '@/lib/format-date';
 import { getFullImageUrl } from '@/lib/image-url';
 import { openInNewTab } from '@/lib/open-in-new-tab';
+import { routes } from '@/lib/routes';
 import { useCustomerDeviceCounts } from '../hooks/use-customer-device-counts';
 import type { Customer } from '../hooks/use-customers';
 
@@ -105,7 +106,7 @@ export const CUSTOMERS_COLUMNS: ColumnDef<UiCustomerEntry>[] = [
     cell: ({ row }: { row: Row<UiCustomerEntry> }) => (
       <div data-no-row-click className="flex items-center justify-end pointer-events-auto">
         <Button
-          onClick={openInNewTab(`/customers/details?id=${row.original.organizationId}`)}
+          onClick={openInNewTab(routes.customers.details(row.original.organizationId))}
           variant="outline"
           size="icon"
           leftIcon={<ArrowRightUpIcon className="w-5 h-5" />}
@@ -119,7 +120,7 @@ export const CUSTOMERS_COLUMNS: ColumnDef<UiCustomerEntry>[] = [
   },
 ];
 
-export const customerRowHref = (row: UiCustomerEntry) => `/customers/details?id=${row.organizationId}`;
+export const customerRowHref = (row: UiCustomerEntry) => routes.customers.details(row.organizationId);
 
 interface CustomersSearchInputProps {
   value: string;
